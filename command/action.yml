@@ -11,14 +11,88 @@ inputs:
   format:
     description: "The target format for the Briefcase command."
     required: true
-  extra_args:
+  extra-args:
     description: "Options to pass to Briefcase command."
     required: false
     default: ""
+  briefcase-version:
+    description: "The Briefcase version to use; the latest version is used by default."
+    required: false
+    default: "latest"
+  python-version:
+    description: "If specified, actions/setup-python will run for that version."
+    required: false
+    default: ""
+  emulator-config:
+    description: 'Configuration definition of emulator; defaults to {"avd":"beePhone"}.'
+    required: false
+    default: '{"avd":"beePhone"}'
 
 runs:
   using: composite
   steps:
-  - name: Briefcase
-    shell: bash
-    run: briefcase ${{ inputs.command }} ${{ inputs.platform }} ${{ inputs.format }} ${{ inputs.extra_args }}
+
+    - name: Workflow Configuration
+      id: config
+      shell: bash
+      run: |
+        case "${{ runner.os }}" in
+          Linux   ) BRIEFCASE_DIR="$HOME/.cache/briefcase" ;;
+          macOS   ) BRIEFCASE_DIR="$HOME/Library/Caches/org.beeware.briefcase" ;;
+          Windows ) BRIEFCASE_DIR="$HOME/AppData/Local/BeeWare/briefcase/Cache" ;;
+          *       ) echo "::error::Failed to determine the Briefcase data directory path" ;;
+        esac
+        echo "briefcase-data-dir=${BRIEFCASE_DIR}" | tee -a ${GITHUB_OUTPUT}
+
+        CACHE_KEY="${{ runner.os }}|${{ inputs.platform }}"
+        # For Linux builds, the cache varies by the output format
+        if [ "${{ startsWith(runner.os, 'linux') }}" = "true" ]; then
+          CACHE_KEY="$CACHE_KEY|${{ inputs.format }}"
+        fi
+        echo "cache-key=$(date +%Y-%m)|${CACHE_KEY}" | tee -a ${GITHUB_OUTPUT}
+
+    - name: Cache Briefcase Tools
+      uses: actions/cache@v4.0.2
+      with:
+        key: briefcase-data|${{ steps.config.outputs.cache-key }}
+        path: ${{ steps.config.outputs.briefcase-data-dir }}
+
+    - name: Linux Dependencies
+      id: linux-deps
+      if: runner.os == 'Linux' && inputs.command == 'run'
+      shell: bash
+      run: |
+        sudo apt update && sudo apt -y install socat xauth
+
+        echo "run-prefix=xvfb-run" | tee -a ${GITHUB_OUTPUT}
+
+    - name: Android Dependencies
+      id: android-deps
+      if: inputs.command == 'run' && inputs.platform == 'android'
+      uses: rmartin16/.github-beeware/.github/actions/setup-android@setup-android
+
+    - name: Set up Python
+      uses: actions/setup-python@v5.1.0
+      if: inputs.python-version != ''
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install Briefcase
+      shell: bash
+      run: |
+        if [[ "${{ inputs.briefcase-version }}" == "latest" ]]; then
+          python -m pip install -U briefcase
+        else
+          python -m pip install -U briefcase==${{ inputs.briefcase-version }}
+        fi
+
+    - name: Briefcase ${{ inputs.command }}
+      shell: bash
+      run: >
+        ${{ steps.linux-deps.outputs.run-prefix }}
+        briefcase
+        ${{ inputs.command }}
+        ${{ inputs.platform }}
+        ${{ inputs.format }}
+        ${{ steps.android-deps.outputs.briefcase-run-args }}
+        ${{ inputs.extra-args }}
