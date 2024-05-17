@@ -1,0 +1,24 @@
+name: Briefcase
+description: Run a Briefcase command
+
+inputs:
+  command:
+    description: "Name of the Briefcase command to run."
+    required: true
+  platform:
+    description: "The target platform for the Briefcase command."
+    required: true
+  format:
+    description: "The target format for the Briefcase command."
+    required: true
+  extra_args:
+    description: "Options to pass to Briefcase command."
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+  - name: Briefcase
+    shell: bash
+    run: briefcase ${{ inputs.command }} ${{ inputs.platform }} ${{ inputs.format }} ${{ inputs.extra_args }}
